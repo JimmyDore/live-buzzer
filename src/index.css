@@ -583,6 +583,16 @@
            text-[0.8125rem] font-semibold leading-snug;
   }
 
+  /* iPhone SE (568 px de haut) : le rappel « garde l'écran allumé » est
+     permanent, donc il se paie sur la hauteur toute la soirée. Il reste
+     lisible, il devient juste plus discret — et les pixels rendus vont à la
+     liste des buzz, qui est le cœur de l'écran (§2). */
+  @media (max-height: 640px) {
+    .bandeau {
+      @apply gap-2 px-2.5 py-1.5 text-[0.75rem];
+    }
+  }
+
   .bandeau--info {
     @apply border-bord bg-surface text-texte2;
   }
@@ -636,6 +646,48 @@
   .champ:focus {
     @apply border-cyan outline-none;
     box-shadow: 0 0 0 4px rgb(34 230 255 / 0.16);
+  }
+
+  /* --- Accueil ------------------------------------------------------------ */
+
+  .accueil {
+    @apply gap-8;
+    padding-top: calc(1.5rem + env(safe-area-inset-top));
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+  }
+
+  /* Écran court (iPhone SE : 320 × 568). Mesuré avant correctif : la page
+     faisait 705 px pour 568 px de fenêtre, et « Rejoindre » — l'une des deux
+     seules actions du §2 — n'était visible qu'à 24 %. On ne touche à RIEN
+     au-dessus de 640 px de haut : le rendu 375 × 812 validé ne bouge pas d'un
+     pixel. */
+  @media (max-height: 640px) {
+    .accueil {
+      @apply gap-3;
+      padding-top: calc(0.375rem + env(safe-area-inset-top));
+      padding-bottom: calc(0.375rem + env(safe-area-inset-bottom));
+    }
+
+    .accueil h1 {
+      font-size: clamp(2.25rem, 12vw, 3rem) !important;
+    }
+
+    .accueil-pitch {
+      @apply mt-1.5 text-[0.8125rem] leading-snug;
+    }
+
+    .accueil-surtitre {
+      @apply mb-1.5 tracking-[0.1em];
+    }
+
+    .accueil-pied {
+      @apply text-[0.6875rem] leading-snug;
+    }
+
+    .accueil .champ--code {
+      font-size: clamp(1.75rem, 10vw, 2.25rem);
+      min-height: 3.25rem;
+    }
   }
 
   .champ--code {

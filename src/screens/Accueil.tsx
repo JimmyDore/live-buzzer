@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { ErreurApi, creerPartie, resumePartie } from '../lib/api'
 import { LONGUEUR_CODE } from '../lib/format'
@@ -25,6 +25,16 @@ export function Accueil() {
   const [erreurCode, setErreurCode] = useState<string | null>(null)
   const [erreurCreation, setErreurCreation] = useState<string | null>(null)
   const [occupation, setOccupation] = useState<Occupation>(null)
+  const zoneJonction = useRef<HTMLElement>(null)
+
+  // À 320 px de large, le message d'erreur tombe à 2 px du bord bas de l'écran
+  // et la page déborde de 137 px : on tape « Rejoindre », il ne se passe RIEN
+  // de visible. On ramène donc l'erreur dans le champ de vision. Mesuré, pas
+  // supposé — voir la critique visuelle.
+  useEffect(() => {
+    if (!erreurCode) return
+    zoneJonction.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  }, [erreurCode])
 
   /** Un tap. On crée, on range le jeton d'hôte, on part sur la console. */
   async function creer() {
@@ -88,7 +98,14 @@ export function Accueil() {
   }
 
   return (
-    <main className="ecran justify-center gap-8 py-6">
+    // `accueil` n'est là que pour la règle « écran court » d'index.css : sur un
+    // iPhone SE (568 px de haut), le bouton « Rejoindre » tombait aux trois
+    // quarts sous la ligne de flottaison, avec 137 px de page invisibles.
+    // L'écartement et les marges hautes/basses vivent dans `.accueil` (et non
+    // en `gap-8 py-6` ici) pour deux raisons : la règle « écran court » doit
+    // pouvoir les surcharger, et `py-6` écrasait purement et simplement le
+    // `env(safe-area-inset-*)` de `.ecran`.
+    <main className="ecran accueil justify-center">
       <header className="text-center">
         <p className="text-[0.6875rem] font-bold uppercase tracking-[0.24em] text-magenta">
           Le buzzer de soirée
@@ -102,7 +119,7 @@ export function Accueil() {
         >
           Live buzzer
         </h1>
-        <p className="mx-auto mt-3 max-w-[30ch] text-sm leading-relaxed text-texte2">
+        <p className="accueil-pitch mx-auto mt-3 max-w-[30ch] text-sm leading-relaxed text-texte2">
           Un téléphone posé sur la table, les autres scannent le QR code. Le plus rapide passe en
           tête, les suivants s’empilent derrière.
         </p>
@@ -110,7 +127,7 @@ export function Accueil() {
 
       {/* --- Action n°1 : créer. Énorme, cyan, un seul tap. ----------------- */}
       <section>
-        <p className="mb-2 text-center text-[0.6875rem] font-bold uppercase tracking-[0.18em] text-texte2">
+        <p className="accueil-surtitre mb-2 text-center text-[0.6875rem] font-bold uppercase tracking-[0.18em] text-texte2">
           Un seul tap — aucune option à régler
         </p>
         <BoutonGeant
@@ -136,7 +153,7 @@ export function Accueil() {
         <span className="h-px flex-1 bg-[color:var(--color-bord-fort)]" />
       </div>
 
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-3" ref={zoneJonction}>
         <ChampCode
           valeur={code}
           onChange={(saisie) => {
@@ -160,7 +177,7 @@ export function Accueil() {
         </Bouton>
       </section>
 
-      <p className="text-center text-xs leading-relaxed text-texte2">
+      <p className="accueil-pied text-center text-xs leading-relaxed text-texte2">
         Aucun compte, aucun score, aucune équipe. Un prénom suffit.
       </p>
     </main>

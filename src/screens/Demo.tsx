@@ -347,7 +347,10 @@ export function Demo() {
 
       <Modale
         ouverte={kickOuvert}
-        titre="Retirer Bertrand\u202f?"
+        // Une cha\u00eene d'attribut JSX ne traite PAS les \u00e9chappements `\u` : la
+        // page affichait litt\u00e9ralement \u00ab Retirer Bertrand\u202f? \u00bb. L'espace
+        // fine ins\u00e9cable avant le \u00ab ? \u00bb passe par une accolade.
+        titre={'Retirer Bertrand\u202f?'}
         onFermer={() => setKickOuvert(false)}
         fermetureParLeFond={false}
         actions={

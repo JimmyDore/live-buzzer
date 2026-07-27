@@ -227,10 +227,12 @@ function Console({ code, jeton }: { code: string; jeton: string }) {
         code={code}
         legende={
           <>
+            {/* Pas de séparateur « · » ici : la légende de la console passe à
+                la ligne dès 375 px (le code en gros et les deux boutons d'en-tête
+                prennent la largeur), et le point restait alors orphelin en fin
+                ou en début de ligne. L'écran joueur, lui, tient sur une ligne
+                et garde son séparateur. */}
             <PointConnexion etat={rt.etat} avecLibelle />
-            <span className="text-bord" aria-hidden="true">
-              ·
-            </span>
             <span>
               {joueurs.length} joueur{joueurs.length > 1 ? 's' : ''}
             </span>
@@ -288,7 +290,20 @@ function Console({ code, jeton }: { code: string; jeton: string }) {
           // doit toujours être au même endroit, manche après manche.
           liste.length === 0 ? 'justify-center' : ''
         }`}
-        style={{ overscrollBehavior: 'contain' }}
+        style={{
+          overscrollBehavior: 'contain',
+          // Même dégradé que la zone des pastilles : sans lui, la ligne du bas
+          // est tranchée net au milieu de sa pilule et se lit comme un bug
+          // d'affichage plutôt que comme « il y en a d'autres en dessous ».
+          // On coupe à 92 % pour ne pas ternir la dernière ligne LISIBLE.
+          // (préfixe `-webkit-` obligatoire pour Safari iOS)
+          ...(liste.length === 0
+            ? null
+            : {
+                maskImage: 'linear-gradient(to bottom, #000 92%, transparent 100%)',
+                WebkitMaskImage: 'linear-gradient(to bottom, #000 92%, transparent 100%)',
+              }),
+        }}
         aria-label="Ordre des buzz"
       >
         {liste.length === 0 ? (
@@ -333,10 +348,12 @@ function Console({ code, jeton }: { code: string; jeton: string }) {
 
       {/* --- Les joueurs connectés ----------------------------------------- */}
       <section className="shrink-0" aria-label="Joueurs connectés">
-        <p className="mb-1.5 text-[0.625rem] font-bold uppercase tracking-[0.16em] text-texte2">
+        {/* Légende sur UNE ligne jusqu'à 320 px : à deux lignes elle coûtait
+            16 px à la liste des buzz, qui est le cœur de l'écran (§2). */}
+        <p className="mb-1.5 text-[0.625rem] font-bold uppercase tracking-[0.1em] text-texte2">
           {joueurs.length === 0
             ? 'Aucun joueur'
-            : `${connectes}/${joueurs.length} en ligne — appui long sur un nom pour le retirer`}
+            : `${connectes}/${joueurs.length} en ligne — appui long pour retirer`}
         </p>
         {joueurs.length === 0 ? (
           <p className="text-sm leading-snug text-texte2">
@@ -347,7 +364,11 @@ function Console({ code, jeton }: { code: string; jeton: string }) {
           // zone ne mange jamais la liste des buzz, et le bord coupé dit
           // qu'il y a du monde en dessous.
           <div
-            className="-mx-1 flex max-h-[min(7.5rem,15vh)] flex-wrap content-start gap-2 overflow-y-auto px-1"
+            // 12vh (et non 15) sur les écrans courts : à 320 × 568, la zone des
+            // pastilles était PLUS HAUTE que la liste des buzz (121 px contre
+            // 112). Le §2 dit l'inverse — la liste est le cœur, les pastilles
+            // sont « compactes ».
+            className="-mx-1 flex max-h-[min(7.5rem,12vh)] flex-wrap content-start gap-2 overflow-y-auto px-1"
             // Le dégradé de bas de zone dit « ça continue » au lieu de laisser
             // une rangée coupée net, qui se lit comme un bug d'affichage.
             // (le préfixe `-webkit-` reste obligatoire pour Safari iOS, qui est
