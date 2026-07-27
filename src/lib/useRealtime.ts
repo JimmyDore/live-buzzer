@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { buzzHttp } from './api'
 import { delaiBackoff } from './backoff'
+import { commander, delaiMasquageAlerte } from './commandes'
 import { ECHANTILLONS_RAPIDES, Horloge, INTERVALLE_LENT_MS, INTERVALLE_RAPIDE_MS } from './horloge'
 import { lireJoueur } from './storage'
 import { DELAI_REPONSE_SYNC_MS, SurveillanceSync } from './surveillance'
@@ -28,6 +29,13 @@ import { DELAI_REPONSE_SYNC_MS, SurveillanceSync } from './surveillance'
 //    pas, on surveille les RÉPONSES du serveur (`SurveillanceSync`, ~8 s au
 //    pire au lieu des 20 s de la coupure de liveness serveur), et on réagit à
 //    `offline` sur-le-champ.
+//
+// 4. UNE COMMANDE D'HÔTE QUI NE PART PAS SE DIT. Corollaire du point 3, et
+//    ancien P0 : les trois commandes (`next`, `lock`, `kick`) jetaient le
+//    booléen d'échec. Le maître tapait MANCHE SUIVANTE, rien ne partait, rien
+//    ne s'affichait. Elles rendent maintenant ce booléen, lèvent
+//    `commandeEchouee`, basculent `etat` en « perdu » et rouvrent la socket
+//    tout de suite. Elles ne mettent RIEN en file : voir `commandes.ts`.
 
 export type EtatConnexion = 'connexion' | 'ouvert' | 'perdu'
 
@@ -78,9 +86,22 @@ export interface Realtime {
    * @returns l'instant (horloge serveur estimée) réellement envoyé.
    */
   buzzer(at?: number): number
-  mancheSuivante(): void
-  verrouiller(locked: boolean): void
-  exclure(playerId: string): void
+  /**
+   * Les trois commandes de l'hôte. Elles rendent `false` quand RIEN n'est
+   * parti — et dans ce cas elles lèvent `commandeEchouee`, basculent `etat` en
+   * « perdu » et relancent la connexion. Elles ne rejouent jamais la commande
+   * après coup : un `next` périmé ouvrirait une manche fantôme (`commandes.ts`).
+   */
+  mancheSuivante(): boolean
+  verrouiller(locked: boolean): boolean
+  exclure(playerId: string): boolean
+  /**
+   * Une commande de l'hôte vient d'être PERDUE (socket fermée), et elle ne sera
+   * pas rejouée. À afficher franchement : c'est le seul indice que le maître
+   * aura que son geste n'a pas eu lieu. Retombe à `false` tout seul une fois la
+   * connexion revenue.
+   */
+  commandeEchouee: boolean
   /** `performance.now() + offset` — l'horloge serveur estimée. */
   maintenant(): number
   /**
@@ -128,6 +149,10 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
   // `arme` vit à part : il est piloté par un `setTimeout` sur `openAt` et non
   // par un message, et le mélanger à `vue` ferait boucler l'effet qui l'arme.
   const [arme, setArme] = useState(false)
+  // Instant (`Date.now()`) du dernier échec de commande, `null` si aucun. Un
+  // instant plutôt qu'un booléen : c'est lui qui permet de tenir le bandeau
+  // affiché un minimum de temps même si la socket revient en 300 ms.
+  const [echecCommande, setEchecCommande] = useState<number | null>(null)
 
   const horlogeRef = useRef<Horloge | null>(null)
   if (horlogeRef.current === null) horlogeRef.current = new Horloge()
@@ -138,6 +163,10 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
   const roleRef = useRef(role)
   const tokenRef = useRef(token)
   const monIdRef = useRef<string | null>(null)
+  // Rouvrir la socket depuis l'extérieur de l'effet (une commande qui échoue).
+  // La logique de reconnexion vit dans l'effet et n'en sortira pas : on n'en
+  // expose qu'une poignée, remise à `null` au démontage.
+  const reprendreRef = useRef<(() => void) | null>(null)
   codeRef.current = code
   roleRef.current = role
   tokenRef.current = token
@@ -145,6 +174,10 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
   // ------------------------------------------------------------- connexion
 
   useEffect(() => {
+    // Une alerte de commande perdue parle de la socket PRÉCÉDENTE : elle ne
+    // survit pas à un changement de session ni à un remontage.
+    setEchecCommande(null)
+
     // Pas de jeton (le joueur n'a pas encore saisi son prénom) : rien à ouvrir.
     if (!code || !token) {
       setVue(VUE_INITIALE)
@@ -425,6 +458,19 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
       connecter()
     }
 
+    /**
+     * Une commande de l'hôte n'a pas pu partir. On ne fait pas attendre le
+     * backoff : le maître est en train de regarder son écran, et la prochaine
+     * chose qu'il fera sera de re-taper.
+     */
+    const reprendre = () => {
+      const ws = wsRef.current
+      // `send` a jeté sur une socket qui se dit OPEN : elle ment, on la jette
+      // plutôt que de lui envoyer une sonde de plus.
+      if (ws && ws.readyState === WebSocket.OPEN) forcerReconnexion()
+      else reveiller()
+    }
+
     const surVisibilite = () => {
       if (document.visibilityState === 'visible') reveiller()
     }
@@ -435,6 +481,7 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
       forcerReconnexion()
     }
 
+    reprendreRef.current = reprendre
     connecter()
     window.addEventListener('online', reveiller)
     window.addEventListener('offline', surHorsLigne)
@@ -442,6 +489,7 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
 
     return () => {
       vivant = false
+      reprendreRef.current = null
       window.removeEventListener('online', reveiller)
       window.removeEventListener('offline', surHorsLigne)
       document.removeEventListener('visibilitychange', surVisibilite)
@@ -483,16 +531,25 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
 
   // ------------------------------------------------------------- commandes
 
-  const envoyer = useCallback((message: object): boolean => {
-    const ws = wsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false
-    try {
-      ws.send(JSON.stringify(message))
-      return true
-    } catch {
-      return false
-    }
-  }, [])
+  /**
+   * Les trois commandes de l'hôte passent par ici, et l'échec n'y est plus
+   * jamais avalé (ancien P0, §4.2) :
+   *   • on le DIT — `commandeEchouee` allume un bandeau franc sur la console ;
+   *   • on bascule en « perdu » — le point d'état ne peut pas continuer
+   *     d'afficher « CONNECTÉ » à la seconde où un geste vient de se perdre ;
+   *   • on rouvre la socket sur-le-champ, sans attendre le backoff.
+   * Et on ne met RIEN en file : rejouer un `next` périmé ouvrirait une manche
+   * fantôme et rouvrirait les buzzers au mauvais moment (`commandes.ts`).
+   */
+  const commanderHote = useCallback(
+    (message: object): boolean =>
+      commander(wsRef.current, message, () => {
+        setEchecCommande(Date.now())
+        setVue((v) => (v.etat === 'perdu' ? v : { ...v, etat: 'perdu' }))
+        reprendreRef.current?.()
+      }),
+    [],
+  )
 
   const maintenant = useCallback(() => performance.now() + horloge.offset, [horloge])
 
@@ -536,23 +593,34 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
     [horloge],
   )
 
-  const mancheSuivante = useCallback(() => {
-    envoyer({ t: 'next' })
-  }, [envoyer])
+  const mancheSuivante = useCallback((): boolean => commanderHote({ t: 'next' }), [commanderHote])
 
   const verrouiller = useCallback(
-    (locked: boolean) => {
-      envoyer({ t: 'lock', locked })
-    },
-    [envoyer],
+    (locked: boolean): boolean => commanderHote({ t: 'lock', locked }),
+    [commanderHote],
   )
 
   const exclure = useCallback(
-    (playerId: string) => {
-      envoyer({ t: 'kick', playerId })
-    },
-    [envoyer],
+    (playerId: string): boolean => commanderHote({ t: 'kick', playerId }),
+    [commanderHote],
   )
+
+  // ------------------------------------- alerte « commande non transmise »
+  //
+  // Elle reste tant qu'on est coupé — c'est le seul message qui dit au maître
+  // que son geste s'est perdu — et s'efface d'elle-même une fois la connexion
+  // revenue. Jamais avant le plancher : une reconnexion en 300 ms ferait
+  // clignoter le bandeau trop vite pour être vu dans une pièce sombre.
+  useEffect(() => {
+    const delai = delaiMasquageAlerte(echecCommande, vue.etat === 'ouvert', Date.now())
+    if (delai === null) return
+    if (delai === 0) {
+      setEchecCommande(null)
+      return
+    }
+    const id = setTimeout(() => setEchecCommande(null), delai)
+    return () => clearTimeout(id)
+  }, [echecCommande, vue.etat])
 
   return useMemo<Realtime>(
     () => ({
@@ -566,13 +634,14 @@ export function useRealtime(opts: { code: string; role: 'host' | 'player'; token
       offsetPret: vue.offsetPret,
       erreur: vue.erreur,
       rtt: vue.rtt,
+      commandeEchouee: echecCommande !== null,
       buzzer,
       mancheSuivante,
       verrouiller,
       exclure,
       maintenant,
     }),
-    [vue, arme, buzzer, mancheSuivante, verrouiller, exclure, maintenant],
+    [vue, arme, echecCommande, buzzer, mancheSuivante, verrouiller, exclure, maintenant],
   )
 }
 

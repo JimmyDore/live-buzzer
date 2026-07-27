@@ -45,9 +45,10 @@ export type { ProprietesModale } from './Modale'
 export { PastilleJoueur } from './PastilleJoueur'
 export type { ProprietesPastilleJoueur } from './PastilleJoueur'
 
-export { BandeauConnexion, PointConnexion } from './PointConnexion'
+export { BandeauCommande, BandeauConnexion, PointConnexion } from './PointConnexion'
 export type {
   EtatConnexion,
+  ProprietesBandeauCommande,
   ProprietesBandeauConnexion,
   ProprietesPointConnexion,
 } from './PointConnexion'

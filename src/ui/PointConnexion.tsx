@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { MESSAGE_COMMANDE_ECHOUEE } from '../lib/commandes'
 import { IconeEclair } from './Icones'
 
 // L'état de connexion est visible en permanence, des deux côtés. Une
@@ -91,6 +92,31 @@ export function BandeauConnexion({ etat, depuis, action }: ProprietesBandeauConn
         )}
       </span>
       {action ? <span className="ml-auto shrink-0">{action}</span> : null}
+    </div>
+  )
+}
+
+export interface ProprietesBandeauCommande {
+  /** Par défaut le message unique de `lib/commandes.ts`. */
+  message?: string
+}
+
+/**
+ * Un geste du maître (MANCHE SUIVANTE, verrou, retrait) n'est PAS parti, et il
+ * ne sera pas rejoué. C'est le pire moment de la soirée pour être discret : sans
+ * ce bandeau, le maître croit sa manche lancée, attend des buzz qui ne viendront
+ * pas, et perd la salle. D'où le rouge qui pulse, les capitales, et
+ * `aria-live="assertive"` — on interrompt, on ne murmure pas.
+ */
+export function BandeauCommande({ message = MESSAGE_COMMANDE_ECHOUEE }: ProprietesBandeauCommande) {
+  return (
+    <div
+      className="bandeau bandeau--coupure shrink-0 items-center text-[0.8125rem] font-extrabold uppercase tracking-[0.06em]"
+      role="alert"
+      aria-live="assertive"
+    >
+      <IconeEclair taille={20} className="shrink-0" />
+      <span className="min-w-0">{message}</span>
     </div>
   )
 }

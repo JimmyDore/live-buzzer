@@ -5,6 +5,21 @@
 // `conn` en trois lignes, sans socket.
 
 /**
+ * Ce qu'un JOUEUR a le droit de savoir des autres : qu'ils existent, leur nom,
+ * s'ils sont en ligne. PAS `hasBuzzed`.
+ *
+ * Le §2 est explicite : « Le joueur ne voit JAMAIS la liste des autres.
+ * Seulement sa position. » Envoyer `hasBuzzed` à un joueur, c'est lui livrer la
+ * liste des autres dans un autre ordre — un onglet réseau ouvert suffisait à
+ * lire qui avait déjà buzzé, donc à savoir s'il restait une place à prendre.
+ * L'HÔTE, lui, garde le champ : sa console grise les pastilles de ceux qui ont
+ * déjà buzzé (§2), et ce filtrage-ci ne doit surtout pas le lui retirer.
+ */
+function sansBuzz(players) {
+  return players.map(({ id, name, connected }) => ({ id, name, connected }));
+}
+
+/**
  * @param {ReturnType<import('./game.mjs').creerSalon>} registre
  */
 export function creerProtocole(registre, { log = console.log, now = Date.now } = {}) {
@@ -45,7 +60,7 @@ export function creerProtocole(registre, { log = console.log, now = Date.now } =
       t: 'state',
       locked: inst.locked,
       openAt: inst.openAt,
-      players: inst.players,
+      players: sansBuzz(inst.players),
       buzzes: inst.buzzes.filter((b) => b.playerId === data.playerId),
     };
   }
@@ -55,8 +70,13 @@ export function creerProtocole(registre, { log = console.log, now = Date.now } =
   }
 
   function diffuserJoueurs(s) {
-    const players = registre.vueJoueurs(s);
-    diffuser(s, () => ({ t: 'players', players }));
+    // Même filtrage que `etatPour` : le `players` part vers TOUT LE MONDE (une
+    // arrivée, un départ), donc sans ce filtre un joueur lisait `hasBuzzed` de
+    // toute la salle à chaque fois que quelqu'un se connectait. Les deux vues
+    // sont calculées une fois, pas une par socket.
+    const pourHote = registre.vueJoueurs(s);
+    const pourJoueur = sansBuzz(pourHote);
+    diffuser(s, (data) => ({ t: 'players', players: data.role === 'host' ? pourHote : pourJoueur }));
   }
 
   // --------------------------------------- opérations partagées WS + HTTP
@@ -110,8 +130,12 @@ export function creerProtocole(registre, { log = console.log, now = Date.now } =
     if (res.error) return res;
 
     // Le joueur exclu : son token n'existe plus, on le lui dit et on ferme.
+    // `playerId` doit être VRAI : une comparaison sur une valeur vide
+    // rejoindrait les sockets de l'hôte (dont le `playerId` est `null`) et
+    // couperait la console du maître. `exclure` l'a déjà validé, mais on ne
+    // laisse pas cette porte entrouverte pour autant.
     for (const conn of [...s.conns]) {
-      if (conn.data?.playerId === playerId) {
+      if (playerId && conn.data?.playerId === playerId) {
         erreur(conn, 'BAD_TOKEN');
         s.conns.delete(conn);
         try {
@@ -243,20 +267,29 @@ export function creerProtocole(registre, { log = console.log, now = Date.now } =
     // surtout pas faire clignoter le joueur en « déconnecté » au passage.
     if (conn.data?.code !== s.code || conn.data?.playerId !== playerId) detacher(conn);
 
-    // Une socket zombie du même client (mode avion, changement de réseau) ne
-    // doit pas continuer à recevoir des diffusions.
-    for (const ancienne of [...s.conns]) {
-      const memeIdentite =
-        auth.role === 'host' ? ancienne.data?.role === 'host' : ancienne.data?.playerId === playerId;
-      if (memeIdentite && ancienne !== conn) {
-        s.conns.delete(ancienne);
-        try {
-          ancienne.close();
-        } catch {
-          /* socket déjà morte */
-        }
-      }
-    }
+    /* ⚠️ NE JAMAIS ÉVINCER ICI. Une version précédente fermait toute autre
+       socket de la même identité (« socket zombie du mode avion »). C'était un
+       P0 : la fermeture partait avec le code 1000, indiscernable d'un au revoir
+       normal, et n'importe quel second `hello` hôte — second onglet, tablette
+       posée à côté, outil de test, ou simple reconnexion qui recouvre l'ancienne
+       socket — tuait la console du maître EN PLEIN JEU. Le maître voyait encore
+       « CONNECTÉ » (il avait reçu son `state` juste avant), mais son verrou et
+       sa MANCHE SUIVANTE partaient dans une socket morte, sans la moindre
+       erreur. Pire, deux consoles hôte se réévinçaient mutuellement à l'infini,
+       la session restant cassée tant que les deux étaient ouvertes.
+
+       Plusieurs sockets pour une même identité sont donc ACCEPTÉES, et c'est
+       même souhaitable : le maître peut garder sa console sur son téléphone et
+       sur une tablette. Rien n'en dépend — les diffusions vont à toutes, et
+       `next` / `lock` / `kick` sont autorisés par le jeton d'hôte, pas par
+       l'identité de la socket.
+
+       Les vraies sockets mortes, elles, sont déjà ramassées sans qu'on ait à
+       fermer quoi que ce soit ici : le FIN du navigateur est traité dans
+       ws.mjs, et le silence applicatif de 20 s conclut le reste (§4.1). Et
+       `detacher()` ne repasse un joueur « déconnecté » que lorsqu'il ne lui
+       reste PLUS AUCUNE socket — cette logique existe précisément parce que
+       la coexistence est le cas normal. */
 
     conn.data = { role: auth.role, code: s.code, playerId, hostToken: auth.role === 'host' ? s.hostToken : null };
     s.conns.add(conn);

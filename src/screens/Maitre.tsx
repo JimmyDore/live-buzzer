@@ -9,6 +9,7 @@ import type { Buzz, Joueur } from '../lib/useRealtime'
 import { useWakeLock } from '../lib/wakelock'
 import {
   Bandeau,
+  BandeauCommande,
   BandeauConnexion,
   Bouton,
   BoutonGeant,
@@ -280,7 +281,11 @@ function Console({ code, jeton }: { code: string; jeton: string }) {
         Garde cet écran allumé et cette page au premier plan.
       </Bandeau>
 
-      {rt.etat === 'perdu' ? <BandeauConnexion etat="perdu" /> : null}
+      {/* Coupure : bandeau franc en haut. Mais quand un GESTE vient d'être
+          perdu, c'est ce message-là qui prime et il s'affiche au ras du bouton,
+          là où le pouce et l'œil se trouvent au moment du tap. Deux bandeaux
+          rouges à la fois mangeraient la liste des buzz sans rien dire de plus. */}
+      {rt.etat === 'perdu' && !rt.commandeEchouee ? <BandeauConnexion etat="perdu" /> : null}
 
       {/* --- Le cœur de l'écran : la liste des buzz ------------------------ */}
       <section
@@ -394,6 +399,12 @@ function Console({ code, jeton }: { code: string; jeton: string }) {
       </section>
 
       {/* --- Le geste de la soirée ----------------------------------------- */}
+      {/* Une commande qui n'est pas partie ne se rejoue pas toute seule : le
+          maître DOIT la refaire, et il ne le fera que s'il l'apprend. Le
+          bandeau se colle au bouton, et s'efface tout seul quand la connexion
+          est revenue. */}
+      {rt.commandeEchouee ? <BandeauCommande /> : null}
+
       <BoutonGeant
         onPointerDown={surPointerDown}
         onClick={surClick}

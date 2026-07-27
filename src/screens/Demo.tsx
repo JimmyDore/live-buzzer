@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { normaliserCode } from '../lib/format'
 import {
   Bandeau,
+  BandeauCommande,
   BandeauConnexion,
   Bouton,
   BoutonGeant,
@@ -269,6 +270,10 @@ export function Demo() {
           </div>
           <BandeauConnexion etat="connexion" />
           <BandeauConnexion etat="perdu" depuis={14} />
+          {/* Le geste du maître n'est pas parti et ne sera pas rejoué : c'est
+              le message le plus important de la console, il se lit à bout de
+              bras dans une pièce sombre. */}
+          <BandeauCommande />
         </div>
       </Section>
 

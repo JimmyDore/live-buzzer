@@ -47,7 +47,10 @@ test('à chaque hello, le serveur renvoie un instantané COMPLET, jamais un incr
   assert.equal(etat.openAt, openAt);
   assert.equal(etat.buzzes.length, 1, 'la liste en cours est dans l’instantané');
   assert.equal(etat.players.length, 1);
-  assert.equal(b.hote.isOpen, false, 'la socket zombie de l’hôte est fermée, elle ne reçoit plus rien');
+  // On NE ferme PAS l'ancienne socket de l'hôte : voir le P0 documenté dans
+  // `bonjour`. Une console encore vivante ne doit jamais être coupée par
+  // l'arrivée d'une autre.
+  assert.equal(b.hote.isOpen, true, 'l’ancienne console reste utilisable');
 });
 
 test('un hello avec un mauvais token ou un code inconnu rend une erreur explicite', () => {
@@ -110,6 +113,74 @@ test('un buzz est annoncé à l’hôte et au joueur concerné, jamais aux autre
   });
   assert.deepEqual(b.joueurs[0].conn.dernier('buzz'), chezHote, 'Marie voit sa propre position');
   assert.equal(b.joueurs[1].conn.dernier('buzz'), null, 'Paul ne voit jamais la liste des autres');
+});
+
+test('un joueur ne reçoit JAMAIS `hasBuzzed` dans son `state` — l’hôte, si', () => {
+  // §2 : « Le joueur ne voit jamais la liste des autres. Seulement sa
+  // position. » `hasBuzzed` par joueur, c'est cette liste dans un autre ordre :
+  // un onglet réseau ouvert suffisait à lire qui avait déjà buzzé.
+  const b = banc(['Marie', 'Paul']);
+  const openAt = b.registre.mancheSuivante(b.code, b.hostToken).openAt;
+  b.h.poser(openAt + 200);
+  b.joueurs[0].conn.recevoir({ t: 'buzz', at: openAt + 150 });
+
+  // Reconnexion de Paul : à chaque hello, un `state` COMPLET (règle d'or §4.2).
+  const paul = fauxConn('paul-2');
+  b.protocole.onConnection(paul, {});
+  paul.recevoir({ t: 'hello', role: 'player', code: b.code, token: b.joueurs[1].token });
+
+  const chezPaul = paul.dernier('state');
+  assert.equal(chezPaul.players.length, 2, 'il voit bien la salle, juste pas ce qu’elle fait');
+  for (const p of chezPaul.players) {
+    assert.deepEqual(Object.keys(p).sort(), ['connected', 'id', 'name'], `champ de trop sur ${p.name}`);
+    assert.equal('hasBuzzed' in p, false);
+  }
+  assert.deepEqual(chezPaul.buzzes, [], 'ni la liste des buzz, ni un buzz qui n’est pas le sien');
+
+  // L'hôte, lui, en a besoin : sa console grise les pastilles de ceux qui ont
+  // déjà buzzé. Ce filtrage ne doit surtout pas le lui retirer.
+  const hote2 = fauxConn('hôte-2');
+  b.protocole.onConnection(hote2, {});
+  hote2.recevoir({ t: 'hello', role: 'host', code: b.code, token: b.hostToken });
+  assert.deepEqual(
+    hote2.dernier('state').players.map((p) => [p.name, p.hasBuzzed]),
+    [
+      ['Marie', true],
+      ['Paul', false],
+    ],
+  );
+});
+
+test('la diffusion `players` est filtrée elle aussi : le joueur n’y lit pas qui a buzzé', () => {
+  // Même fuite par une autre porte : `players` part vers TOUT LE MONDE à
+  // chaque arrivée ou départ, pas seulement vers l'hôte.
+  const b = banc(['Marie', 'Paul']);
+  const openAt = b.registre.mancheSuivante(b.code, b.hostToken).openAt;
+  b.h.poser(openAt + 200);
+  b.joueurs[0].conn.recevoir({ t: 'buzz', at: openAt + 150 });
+  b.hote.vider();
+  b.joueurs[1].conn.vider();
+
+  // Un retardataire rejoint : tout le monde reçoit un `players`.
+  const tard = b.registre.rejoindre(b.code, 'Zoé');
+  const conn = fauxConn('Zoé');
+  b.protocole.onConnection(conn, {});
+  conn.recevoir({ t: 'hello', role: 'player', code: b.code, token: tard.token });
+
+  const chezPaul = b.joueurs[1].conn.dernier('players');
+  assert.ok(chezPaul, 'Paul apprend bien qu’il y a du monde en plus');
+  assert.equal(
+    chezPaul.players.some((p) => 'hasBuzzed' in p),
+    false,
+  );
+  assert.deepEqual(
+    b.hote.dernier('players').players.map((p) => [p.name, p.hasBuzzed]),
+    [
+      ['Marie', true],
+      ['Paul', false],
+      ['Zoé', false],
+    ],
+  );
 });
 
 test('un buzz reclassant (arrivé tard, horodaté tôt) rediffuse un instantané complet', () => {
@@ -330,6 +401,10 @@ test('une socket qui bascule sur une autre session ne reçoit plus les diffusion
 
 test('une socket qui change de joueur dans la même session ne laisse pas de joueur fantôme', () => {
   const b = banc(['Marie', 'Paul']);
+  // Les deux joueurs rendent leur socket : le téléphone partagé ci-dessous sera
+  // la SEULE à les porter, donc la seule à pouvoir les laisser fantômes.
+  b.joueurs.forEach((j) => j.conn.close());
+
   const c = fauxConn('téléphone partagé');
   b.protocole.onConnection(c, {});
   c.recevoir({ t: 'hello', role: 'player', code: b.code, token: b.joueurs[0].token });
@@ -353,4 +428,110 @@ test('la reconnexion à la même place ne fait pas clignoter la pastille', () =>
   assert.equal(b.registre.instantane(b.code).players[0].connected, true);
   assert.deepEqual(b.hote.tous('players'), [], 'aucune diffusion parasite de présence');
   assert.ok(c.dernier('state'), 'et l’instantané complet arrive quand même');
+});
+
+// ------------------------------------- P0 : la console du maître ne doit
+// ------------------------------------- JAMAIS être coupée en silence
+
+test('P0 : un second hello hôte ne ferme pas la console déjà connectée', () => {
+  // Reproduction du P0 de production (session DRMH) : le serveur fermait la
+  // socket du maître avec le code 1000 juste après lui avoir envoyé `state`.
+  // L'UI affichait encore « CONNECTÉ » — elle avait reçu l'instantané — mais
+  // verrou et MANCHE SUIVANTE partaient dans une socket morte, sans erreur.
+  const b = banc(['Marie']);
+  const telephone = b.hote;
+  assert.equal(telephone.isOpen, true);
+
+  // Second onglet / tablette / outil de test : une autre socket dit hello.
+  const tablette = fauxConn('tablette');
+  b.protocole.onConnection(tablette, {});
+  tablette.recevoir({ t: 'hello', role: 'host', code: b.code, token: b.hostToken });
+
+  assert.equal(telephone.isOpen, true, 'la console du maître survit à l’arrivée d’une seconde');
+  assert.ok(tablette.dernier('state'), 'et la seconde reçoit bien son instantané');
+
+  // Les DEUX consoles commandent, et les commandes prennent effet.
+  telephone.recevoir({ t: 'lock', locked: true });
+  assert.equal(b.registre.instantane(b.code).locked, true, 'le verrou du téléphone a pris effet');
+
+  telephone.recevoir({ t: 'next' });
+  const apres = b.registre.instantane(b.code);
+  assert.equal(apres.locked, false, 'MANCHE SUIVANTE a déverrouillé');
+  assert.equal(typeof apres.openAt, 'number', 'MANCHE SUIVANTE a rouvert les buzzers');
+
+  // Et les deux reçoivent les diffusions.
+  assert.ok(tablette.dernier('open'), 'la tablette voit l’ouverture');
+  assert.ok(telephone.dernier('open'), 'le téléphone aussi');
+});
+
+test('P0 : après plusieurs cycles de reconnexion, l’hôte commande toujours pour de vrai', () => {
+  // On ne se contente pas de « aucune erreur n'est revenue » : on relit l'état
+  // pour vérifier que la commande a bel et bien mordu.
+  const b = banc(['Marie', 'Paul']);
+  let console_ = b.hote;
+
+  for (let cycle = 0; cycle < 5; cycle++) {
+    // Coupure brutale (mode avion) puis reconnexion avec le même jeton.
+    console_.close();
+    const neuve = fauxConn(`console-${cycle}`);
+    b.protocole.onConnection(neuve, {});
+    neuve.recevoir({ t: 'hello', role: 'host', code: b.code, token: b.hostToken });
+    assert.ok(neuve.dernier('state'), `cycle ${cycle} : instantané complet reçu`);
+    assert.equal(neuve.isOpen, true, `cycle ${cycle} : la socket n’est pas refermée derrière nous`);
+    console_ = neuve;
+
+    // verrou → l'état doit VRAIMENT changer
+    console_.recevoir({ t: 'lock', locked: true });
+    assert.equal(b.registre.instantane(b.code).locked, true, `cycle ${cycle} : lock effectif`);
+
+    // manche suivante → déverrouille et rouvre pour de bon
+    console_.recevoir({ t: 'next' });
+    const etat = b.registre.instantane(b.code);
+    assert.equal(etat.locked, false, `cycle ${cycle} : next a déverrouillé`);
+    assert.equal(typeof etat.openAt, 'number', `cycle ${cycle} : next a rouvert`);
+    assert.equal(etat.buzzes.length, 0, `cycle ${cycle} : next a vidé la liste`);
+  }
+
+  // kick, après tous ces cycles, doit lui aussi mordre.
+  const cible = b.joueurs[1];
+  console_.recevoir({ t: 'kick', playerId: cible.playerId });
+  const restants = b.registre.instantane(b.code).players.map((p) => p.name);
+  assert.deepEqual(restants, ['Marie'], 'kick effectif après reconnexions');
+});
+
+test('P0 : deux consoles hôte simultanées ne se coupent pas mutuellement', () => {
+  const b = banc(['Marie']);
+  const a = b.hote;
+  const c = fauxConn('console-B');
+  b.protocole.onConnection(c, {});
+
+  // Dix allers-retours de hello : aucune des deux ne doit tomber.
+  for (let i = 0; i < 10; i++) {
+    c.recevoir({ t: 'hello', role: 'host', code: b.code, token: b.hostToken });
+    a.recevoir({ t: 'hello', role: 'host', code: b.code, token: b.hostToken });
+    assert.equal(a.isOpen, true, `tour ${i} : console A vivante`);
+    assert.equal(c.isOpen, true, `tour ${i} : console B vivante`);
+  }
+  a.recevoir({ t: 'next' });
+  assert.equal(typeof b.registre.instantane(b.code).openAt, 'number', 'A commande encore');
+  c.recevoir({ t: 'lock', locked: true });
+  assert.equal(b.registre.instantane(b.code).locked, true, 'B commande aussi');
+});
+
+test('P0 : un joueur avec deux sockets (onglet resté ouvert) garde les deux vivantes', () => {
+  const b = banc(['Marie']);
+  const premiere = b.joueurs[0].conn;
+  const seconde = fauxConn('Marie-onglet-2');
+  b.protocole.onConnection(seconde, {});
+  seconde.recevoir({ t: 'hello', role: 'player', code: b.code, token: b.joueurs[0].token });
+
+  assert.equal(premiere.isOpen, true, 'le premier onglet n’est pas coupé');
+  assert.equal(seconde.isOpen, true);
+  assert.equal(b.registre.instantane(b.code).players[0].connected, true);
+
+  // Une seule socket qui meurt ne doit pas éteindre la pastille.
+  premiere.close();
+  assert.equal(b.registre.instantane(b.code).players[0].connected, true, 'il reste une socket');
+  seconde.close();
+  assert.equal(b.registre.instantane(b.code).players[0].connected, false, 'plus aucune : éteinte');
 });
