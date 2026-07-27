@@ -1,0 +1,752 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   live-buzzer — « néon plateau TV »
+
+   Parti pris : un plateau de quiz télé vu depuis le public. Noir de studio,
+   deux projecteurs (cyan à gauche, magenta à droite) qui teintent à peine le
+   fond, et un seul objet lumineux à l'écran — le buzzer, cerclé de halos
+   concentriques comme une enseigne au néon.
+
+   La grammaire visuelle tient en une idée : **des anneaux**. Le halo du
+   buzzer, le point de connexion, la pastille de rang, le liseré du bouton
+   géant — tout est un empilement d'anneaux de rayons croissants, jamais un
+   flou mou. C'est ce qui donne au jeu son unité et son côté « matériel »,
+   façon vrai bouton d'arcade rétroéclairé.
+
+   Contexte d'usage assumé partout : 375 px de large, une main, pièce mal
+   éclairée, quelqu'un qui a bu un verre, et un buzz qui se joue à 30 ms.
+--------------------------------------------------------------------------- */
+
+/* Anton, auto-hébergée (SIL OFL — cf. public/fonts/README.md).
+   Jamais un CDN : le wifi d'une salle des fêtes lâche, et une police qui
+   n'arrive pas décale toute la mise en page au pire moment de la soirée.
+   `font-weight: 100 900` : Anton n'a qu'une graisse, déjà très grasse. On la
+   déclare sur toute la plage pour empêcher les navigateurs de la re-grossir
+   synthétiquement, ce qui boucherait les contreformes des chiffres. */
+@font-face {
+  font-family: 'Plateau';
+  src: url('/fonts/anton-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  /* Métriques figées ici pour que le repli ci-dessous puisse s'y caler
+     exactement : pendant la fenêtre de `swap`, le texte ne doit pas changer
+     de hauteur de ligne. */
+  ascent-override: 100%;
+  descent-override: 22%;
+  line-gap-override: 0%;
+}
+
+/* Le repli, aux métriques d'Anton. Sans lui, la police système est 31 % plus
+   large et toute la mise en page saute au moment où Anton arrive — sur le
+   wifi d'une salle des fêtes, ce moment peut tomber en plein premier buzz.
+   Mesuré au canvas : « MANCHE SUIVANTE » fait 675 px en Anton et 725 px en
+   Impact à 100 px, d'où `size-adjust: 93%`. Impact d'abord : c'est la
+   condensée grasse présente à la fois sur macOS, iOS et Windows. */
+@font-face {
+  font-family: 'Plateau repli';
+  src:
+    local('Impact'),
+    local('Haettenschweiler'),
+    local('Arial Narrow Bold'),
+    local('Arial Narrow');
+  /* `size-adjust` multiplie AUSSI les surcharges de métrique : on divise donc
+     par 0,93 pour retomber pile sur 100 % / 22 % une fois l'échelle appliquée
+     (vérifié au canvas : même largeur au dixième de pixel près). */
+  ascent-override: 107.5%;
+  descent-override: 23.7%;
+  line-gap-override: 0%;
+  size-adjust: 93%;
+}
+
+@theme {
+  /* --- Jetons figés (CONTRACT.md §9) — ne pas renommer -------------------- */
+  --color-fond: #07070c;
+  --color-cyan: #22e6ff;
+  --color-magenta: #ff2fb9;
+  --color-jaune: #ffe14d;
+  --color-rouge: #ff4d5e;
+  --color-texte: #f2f4ff;
+  --color-texte2: #8c93b8;
+
+  /* --- Dérivés (libres) --------------------------------------------------- */
+  /* Panneau : un cran au-dessus du fond, jamais assez pour faire « carte de
+     back-office ». Contraste vérifié : texte2 y tient 6,17:1. */
+  --color-surface: #0e0e18;
+  --color-surface2: #141422;
+  /* Filet décoratif (aucune information ne repose dessus). */
+  --color-bord: #262640;
+  /* Frontière de composant réellement porteuse d'information (contour d'un
+     bouton secondaire, d'un champ) : 3,16:1 sur le fond, seuil WCAG 1.4.11. */
+  --color-bord-fort: #565c8c;
+  /* Connexion : vert 12,0:1 — orange 10,0:1 — le rouge est le jeton figé. */
+  --color-vert: #3be38b;
+  --color-orange: #ffa23d;
+  /* Buzzer éteint : décoratif, jamais porteur de texte. */
+  --color-eteint: #4a4a63;
+
+  --font-titre: 'Plateau', 'Plateau repli', 'Arial Narrow', system-ui, sans-serif;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+}
+
+/* ---------------------------------------------------------------------------
+   Animations. Déclarées au premier niveau : un @keyframes enterré dans une
+   couche Tailwind est fragile d'une version à l'autre.
+--------------------------------------------------------------------------- */
+
+/* Le halo du buzzer armé. Quatre anneaux nets de rayons croissants + une
+   nappe lumineuse, pas un seul flou : c'est ce qui fait « néon » et pas
+   « ombre portée ». Respiration ~2 s, le rythme d'une inspiration calme —
+   assez lent pour ne pas énerver, assez visible pour dire « vas-y ». */
+@keyframes respiration {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 3px rgb(34 230 255 / 0.95),
+      0 0 0 12px rgb(34 230 255 / 0.18),
+      0 0 0 26px rgb(34 230 255 / 0.1),
+      0 0 0 44px rgb(34 230 255 / 0.045),
+      0 0 70px 4px rgb(34 230 255 / 0.3),
+      inset 0 0 44px rgb(34 230 255 / 0.22);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px rgb(34 230 255 / 1),
+      0 0 0 17px rgb(34 230 255 / 0.26),
+      0 0 0 35px rgb(34 230 255 / 0.14),
+      0 0 0 57px rgb(34 230 255 / 0.06),
+      0 0 92px 12px rgb(34 230 255 / 0.45),
+      inset 0 0 56px rgb(34 230 255 / 0.34);
+  }
+}
+
+/* Arrivée d'une ligne dans la liste du maître. 150 ms, franc, avec un éclair
+   de luminosité : le maître doit l'attraper du coin de l'œil pendant qu'il
+   regarde la salle. Un fondu mou passerait inaperçu — c'est raté par défaut. */
+@keyframes surgir {
+  0% {
+    transform: translateX(-16px) scaleY(0.84);
+    opacity: 0;
+    filter: brightness(2.4);
+  }
+  62% {
+    transform: translateX(3px) scaleY(1.03);
+    opacity: 1;
+  }
+  100% {
+    transform: none;
+    opacity: 1;
+    filter: none;
+  }
+}
+
+/* Le 1er. Le seul moment jubilatoire du jeu : il a le droit à une secousse. */
+@keyframes sacre {
+  0% {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+  55% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  78% {
+    transform: scale(0.98);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Onde de choc au moment du buzz : part du disque et se dissipe. */
+@keyframes onde {
+  0% {
+    box-shadow: 0 0 0 0 var(--onde-couleur, rgb(255 225 77 / 0.7));
+  }
+  100% {
+    box-shadow: 0 0 0 90px rgb(0 0 0 / 0);
+  }
+}
+
+/* Le point de connexion : même grammaire d'anneaux, en miniature. */
+@keyframes battement {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--point-halo);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgb(0 0 0 / 0);
+  }
+}
+
+/* Coupure prolongée : le bandeau doit être désagréable, c'est son travail. */
+@keyframes alerte {
+  0%,
+  100% {
+    background-color: rgb(255 77 94 / 0.14);
+  }
+  50% {
+    background-color: rgb(255 77 94 / 0.26);
+  }
+}
+
+@layer base {
+  html {
+    /* Safari attend 300 ms après un tap pour voir venir un double-tap de zoom.
+       300 ms offerts à l'adversaire sur chaque buzz : toute la correction de
+       latence de §3 part à la poubelle si cette ligne saute. */
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    /* Le pull-to-refresh en plein buzz recharge la page et perd la manche. */
+    overscroll-behavior: none;
+    background-color: var(--color-fond);
+    /* Aucun `color-scheme: light dark` : le jeu est sombre, point. */
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-fond);
+    color: var(--color-texte);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+    min-height: 100dvh;
+    overscroll-behavior: none;
+    /* Deux projecteurs de plateau, très sombres, pour que le noir ne soit pas
+       un aplat mort. Vérifié : même au pic du dégradé, texte2 tient 5,67:1. */
+    background-image:
+      radial-gradient(115% 62% at 6% -12%, #101c30 0%, transparent 58%),
+      radial-gradient(95% 55% at 104% 104%, #24082a 0%, transparent 56%);
+    background-attachment: fixed;
+    /* Un doigt qui glisse sur le buzzer ne doit jamais sélectionner du texte
+       ni ouvrir la loupe iOS. Ce qui doit être copiable le redemande via
+       `.selectionnable`. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    /* Garde-fou : aucun halo, aucun rang géant ne doit pouvoir créer un
+       défilement horizontal entre 320 et 430 px. */
+    overflow-x: hidden;
+  }
+
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Le focus clavier reste visible partout : on ne l'échange pas contre du
+     style. Anneau cyan, cohérent avec le reste de la grammaire. */
+  :focus-visible {
+    outline: 3px solid var(--color-cyan);
+    outline-offset: 3px;
+  }
+
+  input {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /* --- Structure ---------------------------------------------------------- */
+
+  .ecran {
+    @apply mx-auto flex w-full max-w-[30rem] flex-col px-4;
+    min-height: 100dvh;
+    padding-top: calc(0.75rem + env(safe-area-inset-top));
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+    padding-left: calc(1rem + env(safe-area-inset-left));
+    padding-right: calc(1rem + env(safe-area-inset-right));
+  }
+
+  .titre {
+    @apply font-titre uppercase leading-[0.92] tracking-[0.01em];
+  }
+
+  /* Les temps de réaction changent dix fois par seconde. Sans chasse fixe,
+     « 0,84 s » et « 0,91 s » n'ont pas la même largeur et la ligne tremble. */
+  .chiffres {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  .selectionnable {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  /* --- Boutons ------------------------------------------------------------ */
+  /* 48 px de haut minimum, bien au-delà des 44 px exigés. */
+
+  .bouton {
+    @apply relative inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl
+           border-2 px-5 py-3 text-base font-extrabold uppercase tracking-[0.06em]
+           transition-[transform,box-shadow,background-color] duration-75
+           active:translate-y-[2px] active:scale-[0.985]
+           disabled:pointer-events-none disabled:opacity-35;
+    touch-action: manipulation;
+  }
+
+  .bouton--pleine {
+    @apply w-full;
+  }
+
+  .bouton--grande {
+    @apply min-h-14 text-lg;
+  }
+
+  /* Primaire : le cyan est la couleur de l'action. Aplat plein, texte fond —
+     13,2:1. L'ombre basse donne l'épaisseur d'une vraie touche. */
+  .bouton--primaire {
+    @apply border-cyan bg-cyan text-fond;
+    box-shadow:
+      0 4px 0 0 #0f7f92,
+      0 0 0 1px rgb(34 230 255 / 0.5),
+      0 0 26px -4px rgb(34 230 255 / 0.55);
+  }
+  .bouton--primaire:active {
+    box-shadow:
+      0 1px 0 0 #0f7f92,
+      0 0 0 1px rgb(34 230 255 / 0.5),
+      0 0 18px -6px rgb(34 230 255 / 0.5);
+  }
+
+  /* Secondaire : contour porteur d'information à 3,16:1, texte cyan à 12,2:1. */
+  .bouton--secondaire {
+    @apply border-[color:var(--color-bord-fort)] bg-surface2 text-cyan;
+  }
+  .bouton--secondaire:active {
+    @apply border-cyan;
+  }
+
+  .bouton--danger {
+    @apply border-rouge bg-rouge text-fond;
+    box-shadow:
+      0 4px 0 0 #8f2530,
+      0 0 22px -6px rgb(255 77 94 / 0.6);
+  }
+  .bouton--danger:active {
+    box-shadow: 0 1px 0 0 #8f2530;
+  }
+
+  /* Le bouton d'un rôle secondaire mais permanent (verrou, partager) :
+     carré, 48 px, dans l'en-tête. */
+  .bouton-icone {
+    @apply inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl
+           border-2 border-[color:var(--color-bord-fort)] bg-surface2 text-texte
+           transition-colors duration-75 active:scale-95;
+    touch-action: manipulation;
+  }
+
+  .bouton-icone[aria-pressed='true'] {
+    @apply border-rouge bg-rouge text-fond;
+  }
+
+  /* --- Barre basse / bouton géant ---------------------------------------- */
+  /* Le geste de la soirée, fait cinquante fois, dans le noir, au pouce. */
+
+  .barre-basse {
+    @apply sticky bottom-0 z-30 mt-4 w-full;
+    /* Le dégradé évite que la liste passe brutalement « sous » le bouton. */
+    background: linear-gradient(to top, var(--color-fond) 62%, rgb(7 7 12 / 0));
+    padding-top: 1.25rem;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  }
+
+  .bouton-geant {
+    @apply relative flex w-full items-center justify-center gap-3 rounded-[1.375rem]
+           border-2 font-titre uppercase leading-none tracking-[0.03em]
+           transition-[transform,box-shadow] duration-75
+           active:translate-y-[3px]
+           disabled:pointer-events-none disabled:opacity-35;
+    /* 76 px : au-delà du minimum de 72 px du brief, impossible à rater. */
+    min-height: 4.75rem;
+    font-size: clamp(1.75rem, 8.5vw, 2.375rem);
+    padding-inline: 1rem;
+    touch-action: manipulation;
+  }
+
+  .bouton-geant--primaire {
+    @apply border-cyan bg-cyan text-fond;
+    box-shadow:
+      0 6px 0 0 #0f7f92,
+      0 0 0 4px rgb(34 230 255 / 0.16),
+      0 0 0 12px rgb(34 230 255 / 0.07),
+      0 0 44px -6px rgb(34 230 255 / 0.55);
+  }
+  .bouton-geant--primaire:active {
+    box-shadow:
+      0 2px 0 0 #0f7f92,
+      0 0 0 4px rgb(34 230 255 / 0.16),
+      0 0 32px -8px rgb(34 230 255 / 0.5);
+  }
+
+  .bouton-geant--danger {
+    @apply border-rouge bg-rouge text-fond;
+    box-shadow:
+      0 6px 0 0 #8f2530,
+      0 0 0 4px rgb(255 77 94 / 0.16),
+      0 0 40px -8px rgb(255 77 94 / 0.55);
+  }
+
+  /* --- Le buzzer ---------------------------------------------------------- */
+
+  .buzzer-zone {
+    @apply flex w-full flex-1 items-center justify-center;
+    /* Le halo déborde volontiers de l'écran à 320 px : c'est voulu (l'objet
+       éclaire la pièce), et `overflow-x: hidden` sur body empêche le scroll. */
+    padding-block: 2.5rem;
+  }
+
+  .buzzer {
+    @apply relative flex aspect-square select-none flex-col items-center justify-center
+           rounded-full border-0 text-center;
+    /* ≥ 260 px partout, y compris sur un écran de 320 px. */
+    width: clamp(16.25rem, 74vw, 20.5rem);
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: transform 60ms ease-out;
+  }
+
+  .buzzer:active {
+    transform: scale(0.97);
+  }
+
+  /* Armé : disque sombre à rétroéclairage cyan + halo qui respire. On ne fait
+     PAS un aplat cyan plein — un projecteur de 300 px en pleine figure dans le
+     noir, et le halo n'aurait plus rien à éclairer. */
+  .buzzer--arme {
+    background: radial-gradient(circle at 50% 34%, #0f4d5e 0%, #0a2733 46%, #061319 100%);
+    animation: respiration 2s ease-in-out infinite;
+  }
+
+  /* Verrouillé : éteint, désaturé, sans halo. Aucune ambiguïté possible avec
+     l'état armé, même à bout de bras dans le noir. */
+  .buzzer--verrouille {
+    background: radial-gradient(circle at 50% 34%, #17172a 0%, #0d0d16 55%, #08080f 100%);
+    box-shadow:
+      0 0 0 3px var(--color-eteint),
+      0 0 0 12px rgb(74 74 99 / 0.14),
+      inset 0 0 60px rgb(0 0 0 / 0.8);
+  }
+
+  /* Buzzé — 1er : jaune, célébratoire. */
+  .buzzer--premier {
+    background: radial-gradient(circle at 50% 34%, #5c4a08 0%, #2c2306 48%, #12100a 100%);
+    box-shadow:
+      0 0 0 4px rgb(255 225 77 / 1),
+      0 0 0 15px rgb(255 225 77 / 0.24),
+      0 0 0 32px rgb(255 225 77 / 0.12),
+      0 0 0 52px rgb(255 225 77 / 0.05),
+      0 0 96px 8px rgb(255 225 77 / 0.42),
+      inset 0 0 60px rgb(255 225 77 / 0.22);
+  }
+
+  /* Buzzé — 2e et suivants : magenta, franc mais pas fêté. */
+  .buzzer--suivant {
+    background: radial-gradient(circle at 50% 34%, #4d0f39 0%, #260722 48%, #10060f 100%);
+    box-shadow:
+      0 0 0 3px rgb(255 47 185 / 1),
+      0 0 0 13px rgb(255 47 185 / 0.2),
+      0 0 0 28px rgb(255 47 185 / 0.1),
+      0 0 72px 4px rgb(255 47 185 / 0.34),
+      inset 0 0 52px rgb(255 47 185 / 0.2);
+  }
+
+  .buzzer-mot {
+    @apply font-titre uppercase leading-[0.92] tracking-[0.02em];
+    font-size: clamp(3.25rem, 17vw, 4.75rem);
+  }
+
+  .buzzer-rang {
+    @apply font-titre leading-[0.82] tracking-[-0.01em];
+    font-size: clamp(5rem, 27vw, 7.5rem);
+    animation: sacre 380ms cubic-bezier(0.22, 1.2, 0.36, 1) both;
+  }
+
+  /* « 1er », pas « 1ER » : l'ordinal français s'écrit en exposant. C'est le
+     genre de détail qu'un développeur francophone remarque en une seconde. */
+  .buzzer-rang-suffixe {
+    font-size: 0.3em;
+    vertical-align: super;
+    letter-spacing: 0.02em;
+    margin-left: 0.04em;
+  }
+
+  .buzzer-detail {
+    @apply mt-2 text-lg font-bold tracking-[0.04em];
+    font-variant-numeric: tabular-nums;
+  }
+
+  .buzzer-legende {
+    @apply mt-3 max-w-[75%] text-sm font-semibold uppercase tracking-[0.16em];
+  }
+
+  /* --- Liste des buzz ----------------------------------------------------- */
+
+  .ligne-buzz {
+    @apply flex w-full items-center gap-3 rounded-2xl border-2 px-3 py-2.5;
+    animation: surgir 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .ligne-buzz--premier {
+    @apply border-jaune bg-[#1a1608];
+    box-shadow:
+      0 0 0 1px rgb(255 225 77 / 0.5),
+      0 0 34px -10px rgb(255 225 77 / 0.75);
+  }
+
+  .ligne-buzz--suivant {
+    @apply border-[#5b1b47] bg-[#170717];
+  }
+
+  .ligne-rang {
+    @apply font-titre flex shrink-0 items-baseline justify-center leading-none;
+  }
+
+  .ligne-nom {
+    /* `min-w-0` + `truncate` : « Jean-Christophe » ne doit ni déborder ni
+       pousser le temps de réaction hors de l'écran à 320 px. */
+    @apply min-w-0 flex-1 truncate font-bold uppercase tracking-[0.02em];
+  }
+
+  .ligne-temps {
+    @apply shrink-0 font-titre leading-none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- Pastilles joueurs -------------------------------------------------- */
+
+  .pastille {
+    @apply inline-flex min-h-11 max-w-full items-center gap-2 rounded-full border-2
+           border-[color:var(--color-bord-fort)] bg-surface2 py-1.5 pl-2.5 pr-3.5
+           text-sm font-bold text-texte transition-colors duration-100;
+    touch-action: manipulation;
+  }
+
+  .pastille-nom {
+    @apply min-w-0 truncate;
+    max-width: 9.5rem;
+  }
+
+  /* A buzzé : sa place est dans la liste au-dessus, il s'efface d'ici. */
+  .pastille--buzze {
+    @apply border-bord bg-transparent text-texte2;
+  }
+
+  /* Déconnecté : le contour rouge dit « ce nom ne répond plus ». */
+  .pastille--absent {
+    @apply border-[#5a2a31] bg-transparent text-texte2;
+  }
+
+  .pastille--pressee {
+    @apply border-rouge;
+    transform: scale(0.96);
+  }
+
+  /* --- Connexion ---------------------------------------------------------- */
+
+  .point {
+    @apply inline-block shrink-0 rounded-full;
+    width: 0.625rem;
+    height: 0.625rem;
+    animation: battement 2.4s ease-out infinite;
+  }
+
+  .point--ouvert {
+    background-color: var(--color-vert);
+    --point-halo: rgb(59 227 139 / 0.5);
+  }
+
+  .point--connexion {
+    background-color: var(--color-orange);
+    --point-halo: rgb(255 162 61 / 0.55);
+    animation-duration: 1s;
+  }
+
+  .point--perdu {
+    background-color: var(--color-rouge);
+    --point-halo: rgb(255 77 94 / 0.6);
+    animation-duration: 0.8s;
+  }
+
+  .bandeau {
+    @apply flex w-full items-start gap-2.5 rounded-xl border px-3 py-2
+           text-[0.8125rem] font-semibold leading-snug;
+  }
+
+  .bandeau--info {
+    @apply border-bord bg-surface text-texte2;
+  }
+
+  .bandeau--attention {
+    @apply border-[#6b5a1f] bg-[#161206] text-jaune;
+  }
+
+  .bandeau--coupure {
+    @apply border-rouge text-rouge;
+    animation: alerte 1.6s ease-in-out infinite;
+  }
+
+  /* --- En-tête ------------------------------------------------------------ */
+
+  .entete {
+    @apply flex w-full items-center gap-3 border-b-2 border-bord pb-3;
+  }
+
+  .entete-code {
+    @apply font-titre uppercase leading-none tracking-[0.14em] text-cyan;
+    font-size: clamp(1.875rem, 9vw, 2.5rem);
+    text-shadow: 0 0 22px rgb(34 230 255 / 0.45);
+  }
+
+  .entete-legende {
+    @apply mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.6875rem]
+           font-bold uppercase tracking-[0.16em] text-texte2;
+  }
+
+  /* « 12 joueurs » ne doit jamais se couper en « 12 » / « JOUEURS » : la
+     légende passe à la ligne entre ses éléments, jamais à l'intérieur. */
+  .entete-legende > * {
+    white-space: nowrap;
+  }
+
+  /* --- Champ code / prénom ------------------------------------------------ */
+
+  .champ {
+    @apply min-h-14 w-full rounded-2xl border-2 border-[color:var(--color-bord-fort)]
+           bg-surface2 px-4 py-3 text-lg font-bold text-texte
+           placeholder:font-semibold placeholder:tracking-normal placeholder:text-texte2;
+    /* Le repère de saisie reste à 5,9:1 : un placeholder à 40 % d'opacité,
+       c'est joli sur une maquette et illisible sur une table de bar. La
+       différence avec une vraie valeur passe par la graisse et la couleur
+       (texte blanc à 17,8:1), pas par la transparence. */
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .champ:focus {
+    @apply border-cyan outline-none;
+    box-shadow: 0 0 0 4px rgb(34 230 255 / 0.16);
+  }
+
+  .champ--code {
+    @apply font-titre text-center uppercase;
+    font-size: clamp(2rem, 13vw, 3rem);
+    letter-spacing: 0.28em;
+    /* La lettre est décalée d'un demi-interlettre par le tracking : on
+       compense pour que la saisie reste optiquement centrée. */
+    text-indent: 0.28em;
+    min-height: 4.5rem;
+  }
+
+  .champ--erreur {
+    @apply border-rouge;
+  }
+
+  .champ-message {
+    @apply mt-2 flex items-start gap-1.5 text-sm font-semibold leading-snug text-rouge;
+  }
+
+  /* --- Modale -------------------------------------------------------------- */
+
+  .modale-fond {
+    @apply fixed inset-0 z-50 flex items-end justify-center;
+    background: rgb(3 3 7 / 0.86);
+    backdrop-filter: blur(6px);
+    padding: 1rem;
+    padding-top: calc(1rem + env(safe-area-inset-top));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+
+  .modale-boite {
+    @apply flex w-full max-w-[26rem] flex-col gap-4 rounded-3xl border-2 border-bord
+           bg-surface p-5;
+    box-shadow: 0 -8px 60px -12px rgb(34 230 255 / 0.28);
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .modale-titre {
+    @apply font-titre text-2xl uppercase leading-tight tracking-[0.04em] text-texte;
+    /* Un titre court ne doit pas laisser un mot seul sur la deuxième ligne. */
+    text-wrap: balance;
+  }
+
+  /* --- État vide ----------------------------------------------------------- */
+
+  .etat-vide {
+    @apply flex w-full flex-col items-center justify-center gap-2 rounded-2xl
+           border-2 border-dashed border-bord px-5 py-8 text-center;
+  }
+
+  .etat-vide--erreur {
+    @apply border-solid border-[#5a2a31] bg-[#160709];
+  }
+
+  .etat-vide-titre {
+    @apply font-titre text-xl uppercase leading-tight tracking-[0.04em] text-texte;
+  }
+
+  .etat-vide-detail {
+    @apply max-w-[28ch] text-sm leading-relaxed text-texte2;
+  }
+}
+
+@layer utilities {
+  /* Onde de choc locale au moment du buzz : le doigt a un retour visuel avant
+     que le moindre paquet ne parte sur le réseau. */
+  .onde {
+    animation: onde 420ms ease-out forwards;
+  }
+
+  /* --------------------------------------------------------------------------
+     Accessibilité : les animations tombent, les états restent lisibles.
+     Chaque état conserve son halo — figé sur sa phase la plus lumineuse —
+     donc « armé » reste immédiatement distinguable de « verrouillé ».
+  -------------------------------------------------------------------------- */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+
+    .buzzer--arme {
+      animation: none;
+      box-shadow:
+        0 0 0 3px rgb(34 230 255 / 1),
+        0 0 0 17px rgb(34 230 255 / 0.26),
+        0 0 0 35px rgb(34 230 255 / 0.14),
+        0 0 0 57px rgb(34 230 255 / 0.06),
+        0 0 92px 12px rgb(34 230 255 / 0.45),
+        inset 0 0 56px rgb(34 230 255 / 0.34);
+    }
+
+    .point {
+      animation: none;
+    }
+
+    /* La ligne n'a plus d'animation : elle garde un liseré d'arrivée pour
+       rester repérable du coin de l'œil. */
+    .ligne-buzz {
+      animation: none;
+    }
+
+    .bandeau--coupure {
+      animation: none;
+      background-color: rgb(255 77 94 / 0.2);
+    }
+  }
+}

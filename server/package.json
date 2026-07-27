@@ -1,0 +1,13 @@
+{
+  "name": "live-buzzer-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

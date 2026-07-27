@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="live-buzzer">
+  <!-- Le buzzer vu de face : un disque cyan cerclé de halos concentriques.
+       Même grammaire que l'app — des anneaux, jamais un flou. -->
+  <defs>
+    <radialGradient id="souffle" cx="50%" cy="46%" r="60%">
+      <stop offset="0%" stop-color="#0d2f3c"/>
+      <stop offset="100%" stop-color="#07070c"/>
+    </radialGradient>
+    <radialGradient id="chair" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#7ff3ff"/>
+      <stop offset="55%" stop-color="#22e6ff"/>
+      <stop offset="100%" stop-color="#065c74"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#souffle)"/>
+  <circle cx="32" cy="32" r="27" fill="none" stroke="#ff2fb9" stroke-width="1.6" opacity="0.55"/>
+  <circle cx="32" cy="32" r="22" fill="none" stroke="#22e6ff" stroke-width="1.8" opacity="0.45"/>
+  <circle cx="32" cy="32" r="17.5" fill="none" stroke="#22e6ff" stroke-width="2.4"/>
+  <circle cx="32" cy="32" r="12.5" fill="url(#chair)"/>
+</svg>

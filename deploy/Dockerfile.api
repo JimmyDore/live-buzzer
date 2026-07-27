@@ -1,0 +1,19 @@
+# API du buzzer : node brut, node:sqlite, node:crypto, zéro dépendance npm.
+#
+# `node:22-alpine` suit la ligne 22 LTS (v22.23.1 à ce jour sur le VPS, cf.
+# `docker exec musicbingo-api node -v`). C'est au-delà des **22.5** minimum
+# exigés par `node:sqlite` / `DatabaseSync`, et le tag ne redescendra jamais
+# sous cette borne. Même base que music-bingo, déjà éprouvée en prod ici.
+FROM node:22-alpine
+WORKDIR /app
+COPY server/package.json ./
+COPY server/*.mjs ./
+# Pas de `npm ci` : le serveur ne déclare aucune dépendance, et la CI le vérifie.
+# Le dossier de la base est créé à l'image pour que le volume soit monté sur un
+# chemin qui existe déjà, même au tout premier démarrage.
+RUN mkdir -p /data
+ENV PORT=8787 \
+    DB_PATH=/data/livebuzzer.db
+VOLUME /data
+EXPOSE 8787
+CMD ["node", "index.mjs"]

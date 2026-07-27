@@ -1,0 +1,107 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-livebuzzer
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tests front (vitest)
+        run: npm test
+      - name: Tests serveur (node --test)
+        run: cd server && node --test "test/*.test.mjs"
+      # Le zéro-dépendance du serveur est une contrainte de conception, pas une
+      # préférence : `node:http` + `node:crypto` + `node:sqlite`, rien d'autre.
+      # Un `npm install ws` glissé un soir de bug la ferait disparaître sans
+      # bruit — donc la CI casse le build plutôt que de laisser passer.
+      - name: Le serveur reste à zéro dépendance npm
+        run: |
+          node -e 'const pkg = require("./server/package.json"); const champs = ["dependencies", "optionalDependencies", "peerDependencies"].filter((c) => c in pkg); if (champs.length) { console.error("ECHEC : server/package.json declare " + champs.join(", ") + " — le serveur doit rester a zero dependance npm (PROMPT.md section 4)."); process.exit(1); } console.log("OK : server/package.json ne declare aucune dependance.");'
+      - run: npm run build
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy on server
+        run: |
+          ssh -i ~/.ssh/id_ed25519 root@77.42.23.215 'bash -s' <<'EOF'
+          set -euo pipefail
+          REPO=https://github.com/JimmyDore/live-buzzer.git
+          DIR=/root/livebuzzer
+          if [ -d "$DIR/.git" ]; then
+            cd "$DIR"
+            git fetch --prune origin
+            git checkout -B main origin/main
+          else
+            git clone "$REPO" "$DIR"
+            cd "$DIR"
+          fi
+          docker compose up -d --build
+          docker image prune -f
+          EOF
+
+      # Deux sondes, dans cet ordre, parce qu'elles ne disent pas la même chose.
+      # 1) Les conteneurs, depuis le réseau Docker : prouve que la stack elle-même
+      #    est saine, indépendamment de Caddy et du certificat.
+      - name: Health check (conteneurs, réseau Docker)
+        run: |
+          ssh -i ~/.ssh/id_ed25519 root@77.42.23.215 'bash -s' <<'EOF'
+          set -uo pipefail
+          for i in $(seq 1 30); do
+            if docker exec livebuzzer-web wget -q -O /dev/null http://127.0.0.1/ \
+               && docker exec livebuzzer-web wget -q -O - http://livebuzzer-api:8787/api/health | grep -q '"ok":true'; then
+              echo "Conteneurs sains à la tentative $i"
+              docker exec livebuzzer-web wget -q -O - http://livebuzzer-api:8787/api/health
+              echo
+              exit 0
+            fi
+            echo "Tentative $i : conteneurs pas encore prêts, nouvel essai dans 5 s..."
+            sleep 5
+          done
+          echo "Health check conteneurs échoué après 30 tentatives"
+          docker ps --filter name=livebuzzer
+          docker compose -f /root/livebuzzer/docker-compose.yml logs --tail 80
+          exit 1
+          EOF
+
+      # 2) L'URL publique, en HTTPS : prouve la chaîne complète DNS -> Caddy ->
+      #    nginx -> node, certificat compris. C'est la ligne de la Definition of
+      #    Done. Si celle-ci est rouge alors que la précédente est verte, le
+      #    problème est dans le Caddyfile, pas dans la stack.
+      - name: Health check (public, HTTPS)
+        run: |
+          for i in $(seq 1 30); do
+            page=$(curl -fsS -o /dev/null -w '%{http_code}' https://buzz.jimmydore.fr/ || true)
+            api=$(curl -fsS -o /dev/null -w '%{http_code}' https://buzz.jimmydore.fr/api/health || true)
+            if [ "$page" = "200" ] && [ "$api" = "200" ]; then
+              echo "Health check passed on attempt $i"
+              curl -fsS https://buzz.jimmydore.fr/api/health
+              exit 0
+            fi
+            echo "Attempt $i: page='$page' api='$api', retrying in 5s..."
+            sleep 5
+          done
+          echo "Health check failed after 30 attempts"
+          exit 1

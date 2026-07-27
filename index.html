@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- `maximum-scale=1` + `user-scalable=no` : sans eux, Safari attend 300 ms
+         après un tap pour voir venir un double-tap de zoom. 300 ms offerts à
+         l'adversaire sur chaque buzz, c'est toute la correction de latence à la
+         poubelle. `viewport-fit=cover` pour que les safe-areas soient exploitables. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#07070C" />
+    <meta name="description" content="Le buzzer de soirée : un QR code, un prénom, et le premier doigt gagne." />
+    <!-- La display condensée est auto-hébergée (jamais un CDN Google Fonts : le
+         wifi d'une salle des fêtes est mauvais). Sans ce `preload`, le
+         navigateur ne la découvre qu'après avoir parsé le CSS, lui-même chargé
+         par le JS : le code de session s'affiche d'abord en police de repli,
+         puis saute. `crossorigin` est OBLIGATOIRE même en même origine — une
+         police se récupère toujours en mode CORS, et sans lui le fichier est
+         téléchargé deux fois. -->
+    <link rel="preload" href="/fonts/anton-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="BUZZ" />
+    <title>BUZZ</title>
+    <!-- Le fond est posé ici, avant le CSS : sinon le navigateur peint un écran
+         blanc pendant le chargement. Un flash blanc en pleine nuit, sur une
+         table de soirée, c'est une gifle — et sur la console du maître du jeu
+         ça arrive à chaque reconnexion. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background-color: #07070c;
+        color: #f2f4ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

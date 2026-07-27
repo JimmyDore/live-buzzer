@@ -1,0 +1,49 @@
+# Stack buzz.jimmydore.fr — nginx (SPA + proxy /api et /ws) + API node.
+# Pas de ports publiés : le trafic arrive via le Caddy partagé (stack ravetycoon)
+# qui fait le TLS et reverse-proxy vers livebuzzer-web sur le réseau Docker
+# `ravetycoon_default`.
+#
+# ATTENTION : les noms de services sont préfixés `livebuzzer-` à dessein.
+# Le réseau est partagé avec la stack ravetycoon, qui expose déjà les alias DNS
+# `web` et `api` ; un service nommé `web` ou `api` ici capterait le trafic de
+# l'autre stack. Le piège a déjà coûté un incident (cf. compose de music-bingo
+# et de social-circle).
+services:
+  livebuzzer-web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    image: livebuzzer-web
+    container_name: livebuzzer-web
+    restart: unless-stopped
+    depends_on:
+      - livebuzzer-api
+    networks:
+      - ravetycoon_default
+
+  livebuzzer-api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    image: livebuzzer-api
+    container_name: livebuzzer-api
+    restart: unless-stopped
+    # Les mêmes valeurs sont posées en `ENV` dans deploy/Dockerfile.api (pour que
+    # `docker run livebuzzer-api` marche seul) ; on les redit ici pour qu'un
+    # lecteur du compose sache où vit la base sans ouvrir le Dockerfile.
+    environment:
+      PORT: 8787
+      DB_PATH: /data/livebuzzer.db
+    # Volume nommé : la base survit à un `docker compose up --build` en pleine
+    # soirée. C'est tout l'intérêt du filet SQLite (cf. PROMPT.md §4.4).
+    volumes:
+      - livebuzzer-data:/data
+    networks:
+      - ravetycoon_default
+
+volumes:
+  livebuzzer-data:
+
+networks:
+  ravetycoon_default:
+    external: true
