@@ -63,7 +63,7 @@ plantage), purge à **24 h**, prénom tronqué à 24 caractères.
 | `/:code` | Joueur : prénom, puis le buzzer |
 | `/demo` | Galerie du système de design (tous les états, sans serveur) |
 
-Le routeur tient en ~90 lignes (`src/router.tsx`) : quatre routes, React Router
+Le routeur tient en ~100 lignes (`src/router.tsx`) : quatre routes, React Router
 pèserait plus lourd que l'application.
 
 > ⚠️ **L'ordre des tests EST la spécification.** `/m/:code` se teste **avant**
@@ -92,7 +92,7 @@ quelqu'un d'autre.
 `server/package.json` n'a **aucun** champ `dependencies`, et ce n'est pas un oubli.
 Le serveur HTTP est `node:http`, la base est `node:sqlite` (`DatabaseSync`), le
 SHA-1 du handshake est `node:crypto`, et le transport WebSocket est écrit à la
-main dans `server/ws.mjs` (~540 lignes, sa propre suite de tests) : **pas de
+main dans `server/ws.mjs` (~555 lignes, sa propre suite de tests) : **pas de
 paquet `ws`**.
 
 La CI casse le build si le fichier gagne un `dependencies`, `optionalDependencies`
@@ -142,8 +142,8 @@ C'est normal, ça n'a jamais rien cassé, et ça disparaîtra tout seul.
 ### Tests
 
 ```bash
-npm test                                      # front, vitest — 68 tests
-npm run test:server                           # back, node --test — 121 tests
+npm test                                      # front, vitest — 97 tests
+npm run test:server                           # back, node --test — 135 tests
 cd server && node --test "test/*.test.mjs"    # strictement équivalent
 npm run build                                 # tsc --noEmit && vite build
 ```
@@ -234,14 +234,27 @@ seulement sa position (`1er`, `2e`, …) et son temps de réaction.
 La WebSocket porte le jeu ; l'HTTP ne sert qu'à créer, à rejoindre et à secourir.
 
 ```
-POST /api/games                  → 201 { code, hostToken }
-GET  /api/games/:code            → 200 { exists, locked, playerCount }
-POST /api/games/:code/players    → 201 { playerId, token, name }
-                                   404 code inconnu · 409 session complète · 400 prénom vide
-POST /api/games/:code/buzz       → 200 { rank, ms }        (secours si WS fermée)
-                                   403 jeton invalide · 404 inconnue · 409 verrouillé
-GET  /api/health                 → 200 { ok: true }
+POST     /api/games                  → 201 { code, hostToken }
+GET|HEAD /api/games/:code            → 200 { exists, locked, playerCount }
+POST     /api/games/:code/players    → 201 { playerId, token, name }
+                                       404 code inconnu · 409 session complète · 400 prénom vide
+POST     /api/games/:code/buzz       → 200 { rank, ms }        (secours si WS fermée)
+                                       403 jeton invalide · 404 inconnue · 409 verrouillé
+GET|HEAD /api/health                 → 200 { ok: true }
 ```
+
+**`HEAD` est routé comme `GET`** (RFC 9110 §9.3.2), avec les mêmes en-têtes —
+`Content-Type` et un `Content-Length` explicite — et zéro octet de corps. Ce
+n'est pas une faveur faite à `/api/health` : c'est le routeur qui traduit la
+méthode, donc toute route `GET` répond en `HEAD`, et aucune route `POST` ne s'y
+laisse prendre. Sans ça, un moniteur d'uptime — qui sonde en `HEAD` par défaut —
+annonce l'API morte pendant qu'elle sert la soirée. Le routeur ne connaît pas de
+**405** : une méthode qui ne correspond à aucune route tombe sur le 404
+« route inconnue », `HEAD /api/games` comme `GET /api/games`.
+
+> ⚠️ `curl -X HEAD` **paraît** bloquer : curl attend le corps annoncé par
+> `Content-Length`, qu'un `HEAD` correct n'envoie jamais. C'est le client, pas le
+> serveur. Utilise `curl -I`.
 
 Le jeton du buzz de secours se passe en `Authorization: Bearer …` ou dans le corps.
 Un code hors alphabet sur `GET /api/games/:code` rend `{ exists: false }` avec un
@@ -438,7 +451,9 @@ donnent les mêmes chiffres, sinon « la preuve » dépendrait de la chance.
 
 C'est le scénario le plus fréquent d'une vraie soirée : mode avion, ascenseur,
 veille de l'écran, passage wifi → 4G, changement de pièce. Tout le client temps
-réel tient dans `src/lib/useRealtime.ts`.
+réel tient dans `src/lib/useRealtime.ts`, épaulé par trois modules purs, sans
+socket ni timer, donc testables à part : `backoff.ts`, `surveillance.ts` et
+`commandes.ts`.
 
 ### Les trois états de connexion
 
@@ -508,11 +523,56 @@ connexion en vie.
 
 C'est pour ça que la synchro d'horloge tourne toutes les 5 s : elle est le
 heartbeat. Un client qui ne synchronise plus se fait couper au bout de 20 s, puis
-se reconnecte tout seul. **Il n'existe pas, en revanche, de timeout côté client
-qui déclarerait la synchro en échec** : sans échantillon valide, `offset` reste à
-0 et on retombe silencieusement sur l'horodatage serveur. `useRealtime` expose
-`offsetPret` et `rtt` pour le diagnostic, mais aucun écran ne les affiche
-aujourd'hui.
+se reconnecte tout seul. Sans échantillon valide, `offset` reste à 0 et on
+retombe sur l'horodatage serveur : `useRealtime` expose `offsetPret` et `rtt`
+pour le diagnostic, mais aucun écran ne les affiche aujourd'hui.
+
+### Le chien de garde de synchro, côté client
+
+Attendre les 20 s du serveur, c'était 20 s pendant lesquelles le joueur voit un
+buzzer armé qui n'envoie rien nulle part — il tape dans le vide et croit à un
+bug. `src/lib/surveillance.ts` ne fait donc plus confiance à `readyState`, qui
+reste `OPEN` en mode avion, mais aux **réponses** : le serveur répond TOUJOURS à
+un `sync`, donc une sonde restée muette **1 s** est une sonde ratée, et **3
+ratées d'affilée** font passer l'état à `perdu` et rouvrent la socket.
+
+- **3 × 1 s et pas 1 × 3 s** : un paquet perdu isolé ne doit jamais faire
+  clignoter le bandeau. Et **n'importe quel** message du serveur (`state`,
+  `buzz`, pas seulement la réponse au `sync`) remet le compteur à zéro : un
+  aller-retour lent de 1,2 s sur une 4G médiocre ne déclenche donc rien.
+- Chaque sonde ratée en renvoie une **tout de suite**, sans attendre la cadence
+  lente. Budget de détection : **~8 s au pire** (5 s d'attente du prochain `sync`
+  + 3 × 1 s), ~5,5 s en moyenne — contre ~15 à 20 s auparavant.
+- `SurveillanceSync` est une machine à états **pure** : aucun timer, aucune
+  socket. `useRealtime` lui pousse les événements (`surSyncEnvoye`,
+  `surMessageRecu`) et l'interroge (`evaluer`), ce qui la teste sans dormir ni
+  monter de serveur (`src/lib/surveillance.test.ts`).
+
+En debug : un point qui passe rouge 5 à 8 s après un mode avion, c'est le chien
+de garde qui a fait son travail — pas le serveur qui est tombé.
+
+### « Commande non transmise » sur la console du maître
+
+Quand un `next`, un `lock` ou un `kick` ne peut pas partir — socket non `OPEN`,
+ou `send()` qui jette sur une socket qui se dit encore ouverte — la console du
+maître sort un bandeau rouge, `role="alert"` : « **Commande non transmise —
+reconnexion en cours** » (les capitales à l'écran sont du CSS ; le texte a une
+source unique, `MESSAGE_COMMANDE_ECHOUEE`). C'était un P0 : les trois commandes
+jetaient le booléen d'échec, le maître tapait MANCHE SUIVANTE, rien ne partait,
+rien ne s'affichait, et la console annonçait toujours « CONNECTÉ ».
+
+L'échec bascule aussi l'état en « perdu » et rouvre la socket sur-le-champ. Le
+bandeau reste **au moins 4 s** même si la connexion revient en 300 ms — sinon il
+clignoterait trop vite pour être vu dans une pièce sombre — et tant que la
+connexion n'est pas revenue, il ne s'efface pas du tout.
+
+> ⚠️ **La commande n'est PAS mise en file pour être rejouée**
+> (`src/lib/commandes.ts`), et c'est délibéré. Un `next` rejoué trois secondes
+> plus tard efface une liste que le maître est en train de lire et rouvre les
+> buzzers au mauvais moment — pendant qu'il pose la question suivante, par
+> exemple : manche fantôme, buzz attribués à côté, dispute. Une commande perdue
+> se redit d'un tap ; une commande rejouée à contretemps ne se rattrape pas. On
+> échoue donc franchement : on le dit à l'écran, et on rouvre la socket.
 
 ### Ce qu'on regarde, et dans quel ordre
 
@@ -551,6 +611,10 @@ aujourd'hui.
 #      `hello` part, un `state` complet revient, le buzzer se réarme si la manche
 #      est ouverte. Le joueur retrouve sa place SANS retaper son prénom.
 # 4. Même manip sur le téléphone du MAÎTRE : la liste doit revenir intacte.
+# 5. Console du maître en mode avion, puis tape MANCHE SUIVANTE.
+#    → bandeau rouge « Commande non transmise — reconnexion en cours », point
+#      rouge, socket rouverte tout de suite. Au retour du réseau RIEN n'est
+#      rejoué : la manche ne part que si le maître re-tape.
 ```
 
 Rafraîchir la page en pleine partie est un autre cas à tester : le jeton en

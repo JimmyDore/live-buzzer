@@ -36,6 +36,51 @@ test('un code inconnu ou mal formé rend { exists: false }, jamais une erreur te
   }
 });
 
+// ------------------------------------------------- HEAD (RFC 9110 §9.3.2)
+
+test('HEAD répond partout où GET répond, mêmes en-têtes et zéro octet de corps', async (t) => {
+  // Un moniteur d'uptime sonde en HEAD par défaut : si HEAD tombait en 404,
+  // l'API serait annoncée morte alors qu'elle sert la soirée.
+  const app = await startApp();
+  t.after(app.close);
+  const { code } = (await app.call('POST', '/api/games')).body;
+
+  for (const chemin of ['/api/health', `/api/games/${code}`, '/api/games/AAAA']) {
+    const get = await fetch(app.base + chemin);
+    const corpsGet = await get.text();
+    const head = await fetch(app.base + chemin, { method: 'HEAD' });
+
+    assert.equal(head.status, 200, `HEAD ${chemin} → 200 comme le GET`);
+    assert.equal(await head.text(), '', `HEAD ${chemin} n'envoie aucun corps`);
+    assert.equal(head.headers.get('content-type'), get.headers.get('content-type'), chemin);
+    assert.equal(
+      head.headers.get('content-length'),
+      String(Buffer.byteLength(corpsGet)),
+      `${chemin} : le Content-Length annoncé est celui qu'aurait rendu le GET`,
+    );
+  }
+});
+
+test('HEAD ne répond que là où GET répond : 404 ailleurs, jamais sur une route POST', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const { code } = (await app.call('POST', '/api/games')).body;
+
+  assert.equal((await app.call('HEAD', '/api/nawak')).status, 404, 'route inconnue');
+  assert.equal((await app.call('HEAD', '/')).status, 404, 'toujours aucun statique');
+
+  // Le routeur ne connaît pas 405 : une méthode sans route tombe sur le même
+  // « route inconnue » que le GET. HEAD ne fait donc pas exception, il calque.
+  for (const chemin of ['/api/games', `/api/games/${code}/players`, `/api/games/${code}/buzz`]) {
+    assert.equal((await app.call('HEAD', chemin)).status, 404, `HEAD ${chemin} (route POST)`);
+    assert.equal((await app.call('GET', chemin)).status, 404, `GET ${chemin} : même verdict`);
+  }
+
+  // Et surtout aucune session n'a été créée en chemin : la route POST n'a pas
+  // tourné, elle n'a pas seulement vu son corps supprimé.
+  assert.equal((await app.call('GET', `/api/games/${code}`)).body.playerCount, 0);
+});
+
 test('rejoindre : un prénom suffit, les doublons sont désambiguïsés', async (t) => {
   const app = await startApp();
   t.after(app.close);

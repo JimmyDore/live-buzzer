@@ -32,7 +32,7 @@ export function creerApp(registre, deps = {}) {
     const recuA = now();
 
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') {
       res.writeHead(204).end();
@@ -70,29 +70,36 @@ export function creerApp(registre, deps = {}) {
 async function router(req, res, seg, ctx) {
   const { registre, protocole, recuA } = ctx;
 
-  // GET /api/health
-  if (req.method === 'GET' && seg.length === 2 && seg[0] === 'api' && seg[1] === 'health') {
+  // RFC 9110 §9.3.2 : ce qui répond à GET doit répondre à HEAD. On ne traite
+  // donc pas un cas particulier par route — le HEAD emprunte les routes du GET,
+  // et `json()` s'occupe de ne pas écrire le corps. Les routes POST restent
+  // hors de sa portée, et une méthode inconnue ne route nulle part. Sans ça, un
+  // moniteur d'uptime — qui sonde en HEAD par défaut — voit l'API en panne.
+  const methode = req.method === 'HEAD' ? 'GET' : req.method;
+
+  // GET|HEAD /api/health
+  if (methode === 'GET' && seg.length === 2 && seg[0] === 'api' && seg[1] === 'health') {
     return json(res, 200, { ok: true });
   }
 
   if (seg[0] !== 'api' || seg[1] !== 'games') return json(res, 404, { error: 'route inconnue' });
 
   // POST /api/games
-  if (req.method === 'POST' && seg.length === 2) {
+  if (methode === 'POST' && seg.length === 2) {
     return json(res, 201, registre.creerPartie());
   }
 
   const code = normaliserCode(seg[2] ?? '');
 
-  // GET /api/games/:code
-  if (req.method === 'GET' && seg.length === 3) {
+  // GET|HEAD /api/games/:code
+  if (methode === 'GET' && seg.length === 3) {
     // Un code hors alphabet n'est pas une erreur technique : c'est une faute de
     // frappe. Même réponse qu'un code inconnu, l'écran d'accueil sait quoi dire.
     return json(res, 200, code ? registre.resume(code) : { exists: false, locked: false, playerCount: 0 });
   }
 
   // POST /api/games/:code/players
-  if (req.method === 'POST' && seg.length === 4 && seg[3] === 'players') {
+  if (methode === 'POST' && seg.length === 4 && seg[3] === 'players') {
     const corps = await corpsJson(req, res);
     if (corps === REPONDU) return;
     if (!code) return json(res, 404, { error: 'session introuvable' });
@@ -111,7 +118,7 @@ async function router(req, res, seg, ctx) {
   }
 
   // POST /api/games/:code/buzz — repli quand la WebSocket n'est pas OPEN (§3.4).
-  if (req.method === 'POST' && seg.length === 4 && seg[3] === 'buzz') {
+  if (methode === 'POST' && seg.length === 4 && seg[3] === 'buzz') {
     const corps = await corpsJson(req, res);
     if (corps === REPONDU) return;
     if (!code) return json(res, 404, { error: 'session introuvable' });
@@ -137,8 +144,18 @@ function bearer(req) {
 }
 
 function json(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
+  // `Content-Length` explicite (et non le découpage en chunks par défaut) :
+  // c'est ce qui permet à un HEAD d'annoncer EXACTEMENT les en-têtes de son
+  // GET alors qu'il n'envoie aucun octet de corps.
+  const corps = Buffer.from(JSON.stringify(payload), 'utf8');
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': corps.length,
+  });
+  // On coupe le corps nous-mêmes plutôt que de laisser node:http le jeter dans
+  // notre dos : la règle est dans le code, pas dans une note de bas de page.
+  if (res.req.method === 'HEAD') return res.end();
+  res.end(corps);
 }
 
 /** Lit le corps JSON et répond lui-même en cas de problème. */
